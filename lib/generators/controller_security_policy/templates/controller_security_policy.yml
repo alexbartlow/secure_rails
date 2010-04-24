@@ -1,0 +1,25 @@
+# Use this file to set up your permissions for each controller
+# Note the use of YAML references to not repeat yourself
+Policies:
+  manager_or_above: &manager_or_above
+    default:
+      - Admin
+      - Manager
+
+UsersController:
+  new: allow
+  default: deny  
+
+SessionController:
+  default: allow
+
+ManagersController:
+  <<: *manager_or_above
+
+OtherSecureController:
+  <<: *manager_or_above
+AdminController:
+  default:
+    - Admin
+  
+
