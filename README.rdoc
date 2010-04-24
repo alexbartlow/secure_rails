@@ -1,16 +1,56 @@
 = Secure Rails
 
-Mass-assignment is an awesome feature, especially combined with nested attributes, and the ability to use virtual attributes to cause extra effects - and have those be part of a form with zero extra work.
+Securing your rails applications is no harder than securing any other web application.
 
-The problem with mass-assignment is that it encourages you to either abandon security, or have to very verbosely declare all of your permissible attributes in the controller, depending on which user is logged in.
+That is to say, there isn't a whole lot that's done about collecting the cross-cutting concern of security into a cohesive set of policy files.
 
-Obviously, this cross-cutting concern spread over all of your controllers sucks.
+Secure Rails makes securing your rails applications suck less.
 
-Secure Rails is here to make it suck less.
+== Basics
 
-You'll need at least one policy file like the following:
+Before you do anything, you'll need to install the plugin:
 
-  # lib/user_security_policy.rb
+rails plugin install http://github.com/alexbartlow/secure_rails.git
+
+Also, any object you plan on using as an 'Authenticator' must have a +role_on+ method defined.
+
+This role_on method will either be passed an instance of a controller, or a model object to be updated. You might implement it like this:
+  
+  class User < ActiveRecord::Base
+    def role_on(object)
+      if object.is_a?(ApplicationController)
+        controller_role_on(object)
+      else
+        if self.role == :admin
+          :admin
+        elsif object == self
+          :self
+        else 
+          :default
+        end
+      end
+    end
+    
+    def controller_role_on(object)
+      if self.role == :admin
+        :admin
+      elsif object.is_a?(UsersController) && object.params[:id].to_i == self.id
+        :self
+      else
+        :default
+      end
+    end
+  end
+  
+As you can see, this can quickly get out of hand - but role-based authorization is really an application specific thing. Figure out a DRY way of doing it that works for your app, and you'll be set to go. After this, it's smooth sailing.
+
+Now you can use the +security+ generators for Coarse (controller) and Fine (attribute) grained access to your application. Stick +require 'security'+ in your application controller, and it'll require all of your security policy files under lib/security.
+
+== Fine-Grained Attribute Access Control
+
+  rails g security:model User
+
+  # lib/security/models/user.rb
    Secure(User) do |u|
      u.policy(:default) do
        attr_accessible # complete lockdown
@@ -30,7 +70,12 @@ You'll need at least one policy file like the following:
        # but the moderator cannot set the status to banned forever
      end
      
-     u.policy(:super_admin, :include => :admin) do
+     u.policy(:manager) do
+      # this doesn't do anything, but is here to show that you can use include to
+      # pull in multiple roles
+     end
+     
+     u.policy(:super_admin, :include => [:admin, :manager]) do
        def skip_status_validation ; true ; end 
          # superadmins skip the status validation check
      end
@@ -38,20 +83,6 @@ You'll need at least one policy file like the following:
      # policies always take precidence over the policies they include.
      # That's why the super-admin policy works.
    end
-
-And then you'll need a +role_on+ method on whatever object that represents your authentication. So for example, from the test cases:
-
-    def role_on(user)
-      if user == self
-        :self
-      elsif self.role
-        self.role
-      else
-        :default
-      end
-    end
-    
-What this gives you is the ability to do per-role authorization on your models.
 
 You use it like this, assuming that you have a +current_user+ method detailed in your controller that gives you the current user.
 
@@ -64,11 +95,39 @@ You use it like this, assuming that you have a +current_user+ method detailed in
       end
     end
     
-As you can see, you can use both validations and attr_accessible in your policy declaration.
+As you can see, you can use both validations and attr_accessible in your policy declaration. This secures and locks down all of the mass-assignment in your code.
+
+If you'd like to make sure that a hapless developer doesn't use update_attributes instead of the secure version, then make those methods private. Otherwise, as long as you use the secure version, your policy scripts will be in place.
+
+== Coarse-grained Controller Access Control
+
+When you run the following generator:
+
+  rails g security:controller UsersController
+  
+You'll get an access control filter in lib/security/access_control.rb. By default, it looks for a +current_user+ method on your controller to do the authentication. Again, this is application specific. After you implement +current_user+, drop a before filter into your +ApplicationController+ :
+
+  before_filter Security::AccessControl
+  
+It's also a good idea to have a default policy for your application controller, to catch where you've not declared one for the child controller. You'll get an error otherwise.
+
+Now you can declare controller level access controls:
+
+    # lib/security/controllers/users_controller.rb
+    SecureController(UsersController) do |u|
+      u.policy(:default) do
+        # Don't allow unprivileged users to change anything
+        if [:create, :update].include?(params[:action])
+          raise SecurityTransgression.new
+        end
+      end
+    end
+
+These blocks will be evaluated in the context of your controller, so you can redirect, use flashes, log errors, the whole nine yards.
 
 == Todos:
 
-I'd like to work named scopes into this somehow, but to do that we'll need a +role_on_class(klass)+ method. I'm envisioning an API like:
+I'd like to work named scopes into this somehow, I'm envisioning an API like:
 
     u.finder_scope(:default) do |user|
       where(:id => user.id)
@@ -78,8 +137,4 @@ I'd like to work named scopes into this somehow, but to do that we'll need a +ro
       where(:manager_id => :user.id)
     end
     
-This really isn't too terribly hard, and can be pulled off rather easily, it just requires the user throwing another method into the mix.
-
-I'd also like to have the ability for support multiple roles, so if someone is both a +:manager+ and a +:direct_supervisor+ on a certain model, they get both roles applied to them. Likewise, I'd like to be able to mix multiple policies into one, so +:include => [:self, :manager]+ could be a valid line.
-
-More under the hood, right now I have to hack around +remove_attributes_protected_from_mass_assignment+ to make that method check the metaclass. Ideally, I'd like to not rely so much on an alias_method_chain around a private method, so that'll entail implementing the metaclass-based filtering in the module directly.
+This really isn't too terribly hard, and can be pulled off rather easily.

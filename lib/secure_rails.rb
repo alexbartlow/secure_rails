@@ -109,13 +109,19 @@ module SecureRails
 end
 
 def SecureModel(klass, &block)
-  klass.send :class_inheritable_accessor, :security_policies
+  unless klass.respond_to?(:security_policies)
+    klass.send :class_inheritable_accessor, :security_policies 
+  end
   klass.security_policies = {}
+  klass.send :include SecureRails
   block[SecureRails::PolicyBuilder.new(klass, SecureRails::ModelSecurityPolicy)]
 end
 
 def SecureController(klass, &block)
-  klass.send :class_inheritable_accessor, :security_policies
+  unless klass.respond_to?(:security_policies)
+    klass.send :class_inheritable_accessor, :security_policies
+  end
   klass.security_policies = {}
+  klass.send :include SecureRails
   block[SecureRails::PolicyBuilder.new(klass, SecureRails::ControllerSecurityPolicy)]
 end
