@@ -3,62 +3,81 @@ class Object
 end
 
 module SecureRails
+  
+  class PolicyDeclarationError < StandardError ; end 
+  
+  class InvalidAuthenticator < ArgumentError ; end
+  
   def self.included(base)
-    base.send :class_inheritable_accessor, :security_policies
-    base.class_eval do
-      def remove_attributes_protected_from_mass_assignment_with_metaclass(attributes)
-        safe_attributes =
-          if self.metaclass.accessible_attributes.nil? && self.metaclass.protected_attributes.nil?
-            attributes.reject { |key, value| attributes_protected_by_default.include?(key.gsub(/\(.+/, "")) }
-          elsif self.metaclass.protected_attributes.nil?
-            attributes.reject { |key, value| !self.metaclass.accessible_attributes.include?(key.gsub(/\(.+/, "")) || attributes_protected_by_default.include?(key.gsub(/\(.+/, "")) }
-          elsif self.metaclass.accessible_attributes.nil?
-            attributes.reject { |key, value| self.metaclass.protected_attributes.include?(key.gsub(/\(.+/,"")) || attributes_protected_by_default.include?(key.gsub(/\(.+/, "")) }
-          else
-            raise "Declare either attr_protected or attr_accessible for #{self.metaclass}, but not both."
-          end
-
-        removed_attributes = attributes.keys - safe_attributes.keys
-
-        if removed_attributes.any?
-          log_protected_attribute_removal(removed_attributes)
-        end
-
-        remove_attributes_protected_from_mass_assignment_without_metaclass(
-          safe_attributes
-        )
-      end
-      
-      alias_method_chain :remove_attributes_protected_from_mass_assignment, :metaclass
-    end
-    base.security_policies = {}
     base.send :include, SecureRails::InstanceMethods
   end
   module InstanceMethods
     def secure_update_attributes(auth, attrs)
-      self.secured(auth).update_attributes(attrs)
+      self.apply_security_policy_for(auth)
+      self.update_attributes(
+        secure_remove_protected_attributes(attrs)
+      )
+    end
+    
+    def secure_update_attributes!(auth, attrs)
+      self.apply_security_policy_for(auth)
+      self.update_attributes!(
+        secure_remove_protected_attributes(attrs)
+      )
+    end
+    
+    def secure_attributes=(auth, attrs)
+      self.apply_security_policy_for(auth)
+      self.attributes=(
+        secure_remove_protected_attributes(attrs)
+      )
     end
   
     def apply_security_policy_for(auth)
+      unless auth.respond_to?(:role_on)
+        raise SecureRails::InvalidAuthenticator.new(
+          "You supplied #{auth} to a secure method, but it does not provide a role_on method."
+        )
+      end
       proc = self.class.
         security_policies[auth.role_on(self)].
         apply(self)
     end
-  
-    def secured(auth)
-      self.apply_security_policy_for(auth)
-      self
+    
+    def secure_remove_protected_attributes(attrs)
+      
+      maa = self.metaclass.accessible_attributes
+      mpa = self.metaclass.protected_attributes
+      
+      safe_attrs = if mpa && maa
+        raise SecureRails::PolicyDeclarationError.new("The application of your " <<
+          "policies resulted in #{self} having both accessible and protected "   <<
+          "attributes. Specify one, but not the other." )
+      elsif mpa
+        attrs.reject {|key, value| !maa.include?(key.gsub(/\(.+/, ""))}
+      elsif maa
+        attrs.reject {|key, value| mpa.include?(key.gsub(/\(.+/, ""))}
+      else
+        attrs
+      end
+
+      removed_attributes = attrs.keys - safe_attrs.keys
+
+      if removed_attributes.any?
+        log_protected_attribute_removal(removed_attributes)
+      end
+      safe_attrs
     end
   end
   
   class PolicyBuilder
-    def initialize(base)
-      @base = base
+    def initialize(base, klass)
+      @base, @klass = base, klass
     end
     
     def policy(name, opts = {}, &block)
       @base.security_policies ||= {}
-      @base.security_policies[name] = SecureRails::SecurityPolicy.new(opts, block)
+      @base.security_policies[name] = @klass.new(opts, block)
     end
   end
   
@@ -68,15 +87,35 @@ module SecureRails
     end
     
     def apply(object)
-      if @opts[:include]
-        object.class.security_policies[@opts[:include]].apply(object)
+      [@opts[:include]].flatten.compact.each do |included|
+        object.class.security_policies[included].apply(object)
       end
-      
+    end
+  end
+  
+  class ModelSecurityPolicy < SecurityPolicy
+    def apply(object)
+      super(object)
       object.metaclass.class_eval &@block
+    end
+  end
+  
+  class ControllerSecurityPolicy
+    def apply(object)
+      super(object)
+      object.instance_eval &@block
     end
   end
 end
 
-def Secure(klass, &block)
-  block[SecureRails::PolicyBuilder.new(klass)]
+def SecureModel(klass, &block)
+  klass.send :class_inheritable_accessor, :security_policies
+  klass.security_policies = {}
+  block[SecureRails::PolicyBuilder.new(klass, SecureRails::ModelSecurityPolicy)]
+end
+
+def SecureController(klass, &block)
+  klass.send :class_inheritable_accessor, :security_policies
+  klass.security_policies = {}
+  block[SecureRails::PolicyBuilder.new(klass, SecureRails::ControllerSecurityPolicy)]
 end
