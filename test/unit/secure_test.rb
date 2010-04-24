@@ -33,4 +33,11 @@ class SecureTest < Test::Unit::TestCase
     @user.secure_update_attributes(admin, :status => "banned_forever")
     assert !@user.valid?, "Validations should take effect on security hole"
   end
+  
+  def test_validations_for_superadmin
+    admin = User.new(:role => :super_admin)
+    @user.secure_update_attributes(admin, :status => "banned_forever")
+    assert @user.valid?, "Deeply nested permissions should work - " << 
+    " also should apply included permissions before local ones"
+  end
 end
