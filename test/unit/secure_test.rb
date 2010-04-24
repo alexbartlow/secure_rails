@@ -12,10 +12,6 @@ class SecureTest < Test::Unit::TestCase
     assert_equal(:self, @user.role_on(@user))
   end
   
-  def test_secured_for_default_yields_protected_attributes
-    assert @user.secured(User.new).metaclass.accessible_attributes
-  end
-  
   def test_permission_for_default
     @user.secure_update_attributes(User.new, :name => "hacked")
     assert_equal('test', @user.name)
@@ -24,5 +20,17 @@ class SecureTest < Test::Unit::TestCase
   def test_permission_for_self
     @user.secure_update_attributes(@user, :name => "legitimate")
     assert_equal('legitimate', @user.name)
+  end
+  
+  def test_permission_for_admin
+    admin = User.new(:role => :admin)
+    @user.secure_update_attributes(admin, :name => "legitimate")
+    assert_equal('legitimate', @user.name)
+  end
+  
+  def test_validations_for_admin
+    admin = User.new(:role => :admin)
+    @user.secure_update_attributes(admin, :status => "banned_forever")
+    assert !@user.valid?, "Validations should take effect on security hole"
   end
 end

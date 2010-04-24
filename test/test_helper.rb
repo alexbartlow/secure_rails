@@ -20,7 +20,7 @@ ActiveRecord::Base.establish_connection(
 )
 ActiveRecord::Schema.define() do
   create_table :users do |u|
-    u.string :name, :email, :status
+    u.string :name, :email, :status, :role
   end
 end
 
@@ -29,6 +29,8 @@ class User < ActiveRecord::Base
   def role_on(user)
     if user == self
       :self
+    elsif self.role
+      self.role
     else
       :default
     end

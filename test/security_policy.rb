@@ -7,18 +7,12 @@ Secure(User) do |u|
     attr_accessible :name, :email # The user himself can edit name and email
   end
   
-  u.policy(:moderator, :include => :self) do
-    attr_accessible :notes_attributes 
-    # moderators can edit name and email and the nested attribute notes
-  end
-  
-  u.policy(:admin, :include => :moderator) do
+  u.policy(:admin, :include => :self) do
     attr_accessible :status # moderators can edit status
-  
-    validates_exclusion_of :status, :in => [:banned_forever], 
+    def skip_status_validation ; false ; end
+    validates_exclusion_of :status, :in => %w{banned_forever}, 
       :unless => :skip_status_validation
       
-    def skip_status_validation ; false ; end
     # but the moderator cannot set the status to banned forever
   end
   

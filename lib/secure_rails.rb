@@ -68,16 +68,11 @@ module SecureRails
     end
     
     def apply(object)
-      p = lambda do |parent_block, block, object|
-        object.metaclass.instance_eval &parent_block
-        object.metaclass.instance_eval &block
+      if @opts[:include]
+        object.class.security_policies[@opts[:include]].apply(object)
       end
-      if included_policy = object.class.security_policies[@opts[:include]]
-        
-      end
-      p.curry[
-        object.class.security_policies[@opts[:include]].try(:apply, self) || lambda {}
-      ][@block, object]
+      
+      object.metaclass.class_eval &@block
     end
   end
 end
